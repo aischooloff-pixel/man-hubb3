@@ -40,6 +40,7 @@ export function useProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [articlesCount, setArticlesCount] = useState(0);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const getInitData = useCallback(() => {
     // Prefer the WebApp instance we captured in useTelegram (it becomes reliable after tg.ready())
@@ -48,6 +49,23 @@ export function useProfile() {
     return initData || window.Telegram?.WebApp?.initData || '';
   }, [webApp]);
 
+  // Check if user is admin
+  const checkAdminRole = useCallback(async (profileId: string) => {
+    try {
+      const { data } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', profileId)
+        .eq('role', 'admin')
+        .maybeSingle();
+      
+      setIsAdmin(!!data);
+    } catch (err) {
+      console.error('Error checking admin role:', err);
+      setIsAdmin(false);
+    }
+  }, []);
+
   // Sync profile with backend (validates initData server-side)
   const syncProfile = useCallback(async () => {
     const initData = getInitData();
@@ -55,6 +73,7 @@ export function useProfile() {
     if (!initData) {
       setProfile(null);
       setArticlesCount(0);
+      setIsAdmin(false);
       setError(
         'Нет данных Telegram (initData). Откройте мини‑приложение из чата бота и попробуйте ещё раз.'
       );
@@ -76,7 +95,7 @@ export function useProfile() {
       }
 
       if (data?.profile) {
-        setProfile({
+        const profileData = {
           ...data.profile,
           reputation: data.profile.reputation || 0,
           is_premium: data.profile.is_premium || false,
@@ -84,11 +103,16 @@ export function useProfile() {
           show_avatar: data.profile.show_avatar ?? true,
           show_name: data.profile.show_name ?? true,
           show_username: data.profile.show_username ?? true,
-        });
+        };
+        setProfile(profileData);
         setArticlesCount(data.articlesCount || 0);
+        
+        // Check if user is admin
+        await checkAdminRole(profileData.id);
       } else {
         setProfile(null);
         setArticlesCount(0);
+        setIsAdmin(false);
         setError('Профиль не найден. Попробуйте обновить страницу и открыть мини‑приложение заново.');
       }
     } catch (err: any) {
@@ -96,10 +120,11 @@ export function useProfile() {
       setError(err?.message || 'Ошибка синхронизации профиля');
       setProfile(null);
       setArticlesCount(0);
+      setIsAdmin(false);
     } finally {
       setLoading(false);
     }
-  }, [getInitData]);
+  }, [getInitData, checkAdminRole]);
 
   // Update social links via direct supabase (public read, service_role write - we keep this simple for now)
   const updateSocialLinks = async (telegramChannel: string, website: string) => {
@@ -165,6 +190,7 @@ export function useProfile() {
     loading,
     error,
     articlesCount,
+    isAdmin,
     updateSocialLinks,
     updatePrivacy,
     refetch: syncProfile,

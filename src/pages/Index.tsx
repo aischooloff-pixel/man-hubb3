@@ -16,7 +16,7 @@ import { useProfile } from '@/hooks/use-profile';
 import { useArticles, Article } from '@/hooks/use-articles';
 
 export default function Index() {
-  const { profile, loading: profileLoading } = useProfile();
+  const { profile, loading: profileLoading, isAdmin } = useProfile();
   const { getApprovedArticles } = useArticles();
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isPremiumOpen, setIsPremiumOpen] = useState(false);
@@ -48,6 +48,44 @@ export default function Index() {
 
   const userName = profile?.first_name || 'друг';
   const isPremium = profile?.is_premium || false;
+
+  // Helper to apply privacy settings (admins see original data)
+  const getAuthorDisplay = (author: Article['author']) => {
+    if (!author) return undefined;
+    
+    // Admins see original data regardless of privacy settings
+    if (isAdmin) {
+      return {
+        id: author.id,
+        telegram_id: 0,
+        username: author.username || '',
+        first_name: author.first_name || '',
+        last_name: author.last_name || undefined,
+        avatar_url: author.avatar_url || undefined,
+        reputation: author.reputation || 0,
+        articles_count: 0,
+        is_premium: author.is_premium || false,
+        created_at: '',
+      };
+    }
+    
+    // Regular users see privacy-filtered data
+    return {
+      id: author.id,
+      telegram_id: 0,
+      username: author.show_username !== false ? author.username || '' : '',
+      first_name: author.show_name !== false ? author.first_name || '' : 'Аноним',
+      last_name: author.show_name !== false ? author.last_name || undefined : undefined,
+      avatar_url:
+        author.show_avatar !== false
+          ? author.avatar_url || undefined
+          : `https://api.dicebear.com/7.x/shapes/svg?seed=${author.id}`,
+      reputation: author.reputation || 0,
+      articles_count: 0,
+      is_premium: author.is_premium || false,
+      created_at: '',
+    };
+  };
 
   if (profile?.is_blocked) {
     return (
@@ -109,47 +147,27 @@ export default function Index() {
         ) : featuredArticles.length > 0 ? (
           <ArticleCarousel
             title="Популярное"
-            articles={featuredArticles.map(a => {
-              const safeAuthor = a.author
-                ? {
-                    id: a.author.id,
-                    telegram_id: 0,
-                    username: a.author.show_username !== false ? a.author.username || '' : '',
-                    first_name: a.author.show_name !== false ? a.author.first_name || '' : 'Аноним',
-                    last_name: a.author.show_name !== false ? a.author.last_name || undefined : undefined,
-                    avatar_url:
-                      a.author.show_avatar !== false
-                        ? a.author.avatar_url || undefined
-                        : `https://api.dicebear.com/7.x/shapes/svg?seed=${a.author.id}`,
-                    reputation: a.author.reputation || 0,
-                    articles_count: 0,
-                    is_premium: a.author.is_premium || false,
-                    created_at: '',
-                  }
-                : undefined;
-
-              return {
-                id: a.id,
-                author_id: a.author_id || '',
-                author: a.is_anonymous ? undefined : safeAuthor,
-                category_id: a.category_id || '',
-                topic_id: '',
-                title: a.title,
-                preview: a.preview || '',
-                body: a.body,
-                media_url: a.media_url || undefined,
-                media_type: a.media_type as 'image' | 'youtube' | undefined,
-                is_anonymous: a.is_anonymous || false,
-                status: (a.status || 'pending') as 'draft' | 'pending' | 'approved' | 'rejected',
-                likes_count: a.likes_count || 0,
-                comments_count: a.comments_count || 0,
-                favorites_count: a.favorites_count || 0,
-                rep_score: a.rep_score || 0,
-                allow_comments: a.allow_comments !== false,
-                created_at: a.created_at || '',
-                updated_at: a.updated_at || '',
-              };
-            })}
+            articles={featuredArticles.map(a => ({
+              id: a.id,
+              author_id: a.author_id || '',
+              author: (a.is_anonymous && !isAdmin) ? undefined : getAuthorDisplay(a.author),
+              category_id: a.category_id || '',
+              topic_id: '',
+              title: a.title,
+              preview: a.preview || '',
+              body: a.body,
+              media_url: a.media_url || undefined,
+              media_type: a.media_type as 'image' | 'youtube' | undefined,
+              is_anonymous: a.is_anonymous || false,
+              status: (a.status || 'pending') as 'draft' | 'pending' | 'approved' | 'rejected',
+              likes_count: a.likes_count || 0,
+              comments_count: a.comments_count || 0,
+              favorites_count: a.favorites_count || 0,
+              rep_score: a.rep_score || 0,
+              allow_comments: a.allow_comments !== false,
+              created_at: a.created_at || '',
+              updated_at: a.updated_at || '',
+            }))}
             className="mb-8"
           />
         ) : null}
@@ -182,54 +200,34 @@ export default function Index() {
             </div>
           ) : filteredArticles.length > 0 ? (
             <div className="space-y-4">
-              {filteredArticles.map((article, index) => {
-                const safeAuthor = article.author
-                  ? {
-                      id: article.author.id,
-                      telegram_id: 0,
-                      username: article.author.show_username !== false ? article.author.username || '' : '',
-                      first_name: article.author.show_name !== false ? article.author.first_name || '' : 'Аноним',
-                      last_name: article.author.show_name !== false ? article.author.last_name || undefined : undefined,
-                      avatar_url:
-                        article.author.show_avatar !== false
-                          ? article.author.avatar_url || undefined
-                          : `https://api.dicebear.com/7.x/shapes/svg?seed=${article.author.id}`,
-                      reputation: article.author.reputation || 0,
-                      articles_count: 0,
-                      is_premium: article.author.is_premium || false,
-                      created_at: '',
-                    }
-                  : undefined;
-
-                return (
-                  <ArticleCard
-                    key={article.id}
-                    article={{
-                      id: article.id,
-                      author_id: article.author_id || '',
-                      author: article.is_anonymous ? undefined : safeAuthor,
-                      category_id: article.category_id || '',
-                      topic_id: '',
-                      title: article.title,
-                      preview: article.preview || '',
-                      body: article.body,
-                      media_url: article.media_url || undefined,
-                      media_type: article.media_type as 'image' | 'youtube' | undefined,
-                      is_anonymous: article.is_anonymous || false,
-                      status: (article.status || 'pending') as 'draft' | 'pending' | 'approved' | 'rejected',
-                      likes_count: article.likes_count || 0,
-                      comments_count: article.comments_count || 0,
-                      favorites_count: article.favorites_count || 0,
-                      rep_score: article.rep_score || 0,
-                      allow_comments: article.allow_comments !== false,
-                      created_at: article.created_at || '',
-                      updated_at: article.updated_at || '',
-                    }}
-                    className="animate-slide-up"
-                    style={{ animationDelay: `${index * 100}ms` } as React.CSSProperties}
-                  />
-                );
-              })}
+              {filteredArticles.map((article, index) => (
+                <ArticleCard
+                  key={article.id}
+                  article={{
+                    id: article.id,
+                    author_id: article.author_id || '',
+                    author: (article.is_anonymous && !isAdmin) ? undefined : getAuthorDisplay(article.author),
+                    category_id: article.category_id || '',
+                    topic_id: '',
+                    title: article.title,
+                    preview: article.preview || '',
+                    body: article.body,
+                    media_url: article.media_url || undefined,
+                    media_type: article.media_type as 'image' | 'youtube' | undefined,
+                    is_anonymous: article.is_anonymous || false,
+                    status: (article.status || 'pending') as 'draft' | 'pending' | 'approved' | 'rejected',
+                    likes_count: article.likes_count || 0,
+                    comments_count: article.comments_count || 0,
+                    favorites_count: article.favorites_count || 0,
+                    rep_score: article.rep_score || 0,
+                    allow_comments: article.allow_comments !== false,
+                    created_at: article.created_at || '',
+                    updated_at: article.updated_at || '',
+                  }}
+                  className="animate-slide-up"
+                  style={{ animationDelay: `${index * 100}ms` } as React.CSSProperties}
+                />
+              ))}
             </div>
           ) : (
             <div className="py-8 text-center text-muted-foreground">

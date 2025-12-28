@@ -16,7 +16,7 @@ import { useProfile } from '@/hooks/use-profile';
 
 export default function Hub() {
   const { getApprovedArticles, getUserArticles } = useArticles();
-  const { profile } = useProfile();
+  const { profile, isAdmin } = useProfile();
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isMyArticlesOpen, setIsMyArticlesOpen] = useState(false);
@@ -58,27 +58,49 @@ export default function Hub() {
     setExpandedArticleId(expandedArticleId === articleId ? null : articleId);
   };
 
+  // Helper to apply privacy settings (admins see original data)
+  const getAuthorDisplay = (author: Article['author']) => {
+    if (!author) return undefined;
+    
+    // Admins see original data regardless of privacy settings
+    if (isAdmin) {
+      return {
+        id: author.id,
+        telegram_id: 0,
+        username: author.username || '',
+        first_name: author.first_name || '',
+        last_name: author.last_name || undefined,
+        avatar_url: author.avatar_url || undefined,
+        reputation: author.reputation || 0,
+        articles_count: 0,
+        is_premium: author.is_premium || false,
+        created_at: '',
+      };
+    }
+    
+    // Regular users see privacy-filtered data
+    return {
+      id: author.id,
+      telegram_id: 0,
+      username: author.show_username !== false ? author.username || '' : '',
+      first_name: author.show_name !== false ? author.first_name || '' : 'Аноним',
+      last_name: author.show_name !== false ? author.last_name || undefined : undefined,
+      avatar_url:
+        author.show_avatar !== false
+          ? author.avatar_url || undefined
+          : `https://api.dicebear.com/7.x/shapes/svg?seed=${author.id}`,
+      reputation: author.reputation || 0,
+      articles_count: 0,
+      is_premium: author.is_premium || false,
+      created_at: '',
+    };
+  };
+
   // Map Article to the format expected by components
   const mapArticle = (article: Article) => ({
     id: article.id,
     author_id: article.author_id || '',
-    author: article.author
-      ? {
-          id: article.author.id,
-          telegram_id: 0,
-          username: article.author.show_username !== false ? article.author.username || '' : '',
-          first_name: article.author.show_name !== false ? article.author.first_name || '' : 'Аноним',
-          last_name: article.author.show_name !== false ? article.author.last_name || undefined : undefined,
-          avatar_url:
-            article.author.show_avatar !== false
-              ? article.author.avatar_url || undefined
-              : `https://api.dicebear.com/7.x/shapes/svg?seed=${article.author.id}`,
-          reputation: article.author.reputation || 0,
-          articles_count: 0,
-          is_premium: article.author.is_premium || false,
-          created_at: '',
-        }
-      : undefined,
+    author: (article.is_anonymous && !isAdmin) ? undefined : getAuthorDisplay(article.author),
     category_id: article.category_id || '',
     topic_id: '',
     title: article.title,
