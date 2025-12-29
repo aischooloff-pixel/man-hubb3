@@ -1,4 +1,4 @@
-import { Crown, Zap, Infinity, Star } from 'lucide-react';
+import { Crown, Bot, Users, Infinity, BadgeCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -9,9 +9,9 @@ interface PremiumBannerProps {
 
 export function PremiumBanner({ className, onClick }: PremiumBannerProps) {
   const features = [
+    { icon: Bot, label: 'ИИ ассистент' },
+    { icon: Users, label: 'Закрытое сообщество' },
     { icon: Infinity, label: 'Безлимит публикаций' },
-    { icon: Zap, label: 'Приоритетная модерация' },
-    { icon: Star, label: 'PRO значок' },
   ];
 
   return (

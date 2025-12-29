@@ -211,6 +211,72 @@ export type Database = {
           },
         ]
       }
+      playlists: {
+        Row: {
+          category: string
+          cover_urls: string[] | null
+          created_at: string | null
+          id: string
+          service: string
+          title: string
+          updated_at: string | null
+          url: string
+        }
+        Insert: {
+          category: string
+          cover_urls?: string[] | null
+          created_at?: string | null
+          id?: string
+          service: string
+          title: string
+          updated_at?: string | null
+          url: string
+        }
+        Update: {
+          category?: string
+          cover_urls?: string[] | null
+          created_at?: string | null
+          id?: string
+          service?: string
+          title?: string
+          updated_at?: string | null
+          url?: string
+        }
+        Relationships: []
+      }
+      podcasts: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          id: string
+          thumbnail_url: string | null
+          title: string
+          updated_at: string | null
+          youtube_id: string
+          youtube_url: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          thumbnail_url?: string | null
+          title: string
+          updated_at?: string | null
+          youtube_id: string
+          youtube_url: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          thumbnail_url?: string | null
+          title?: string
+          updated_at?: string | null
+          youtube_id?: string
+          youtube_url?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null

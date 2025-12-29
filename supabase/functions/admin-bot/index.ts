@@ -135,6 +135,8 @@ async function handleStart(chatId: number, userId: number) {
 📰 /st — Список статей
 ❓ /questions — Вопросы в поддержку
 📢 /broadcast — Рассылка всем пользователям
+🎙 /podc — Управление подкастами
+🎵 /pl — Управление плейлистами
 ❓ /help — Справка
 
 <b>Управление Premium:</b>
@@ -1011,7 +1013,462 @@ async function handleSearchArticles(chatId: number, userId: number, query: strin
   await handleArticles(chatId, userId, 0, undefined, query);
 }
 
-// Handle /broadcast command
+// ==================== PODCASTS MANAGEMENT ====================
+
+const MAX_PODCASTS = 10;
+
+// Extract YouTube ID from URL
+function extractYouTubeId(url: string): string | null {
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([^&\n?#]+)/,
+    /^([a-zA-Z0-9_-]{11})$/
+  ];
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+// Handle /podc command
+async function handlePodcasts(chatId: number, userId: number) {
+  if (!isAdmin(userId)) return;
+
+  const { count } = await supabase
+    .from('podcasts')
+    .select('*', { count: 'exact', head: true });
+
+  const message = `🎙 <b>Управление подкастами</b>
+
+📊 Загружено: ${count || 0}/10 роликов
+
+Выберите действие:`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '➕ Добавить', callback_data: 'podcast_add' }],
+      [{ text: '🗑 Удалить', callback_data: 'podcast_delete_list' }],
+    ],
+  };
+
+  await sendAdminMessage(chatId, message, { reply_markup: keyboard });
+}
+
+// Handle podcast add start
+async function handlePodcastAddStart(callbackQuery: any) {
+  const { id, message, from } = callbackQuery;
+
+  // Check limit
+  const { count } = await supabase
+    .from('podcasts')
+    .select('*', { count: 'exact', head: true });
+
+  if ((count || 0) >= MAX_PODCASTS) {
+    await answerCallbackQuery(id, '❌ Ошибка, загружено уже 10 роликов');
+    return;
+  }
+
+  // Store state
+  await supabase.from('admin_settings').upsert({
+    key: `pending_podcast_${from.id}`,
+    value: JSON.stringify({ step: 'url' }),
+  });
+
+  await answerCallbackQuery(id);
+  await sendAdminMessage(message.chat.id, `🎙 <b>Добавление подкаста</b>
+
+Шаг 1/3: Отправьте ссылку на YouTube видео`);
+}
+
+// Handle podcast URL input
+async function handlePodcastUrlInput(chatId: number, userId: number, text: string): Promise<boolean> {
+  const { data: pending } = await supabase
+    .from('admin_settings')
+    .select('value')
+    .eq('key', `pending_podcast_${userId}`)
+    .maybeSingle();
+
+  if (!pending) return false;
+
+  let state;
+  try {
+    state = JSON.parse(pending.value || '{}');
+  } catch {
+    return false;
+  }
+
+  if (state.step === 'url') {
+    const youtubeId = extractYouTubeId(text.trim());
+    if (!youtubeId) {
+      await sendAdminMessage(chatId, '❌ Неверная ссылка на YouTube. Попробуйте ещё раз.');
+      return true;
+    }
+
+    // Update state
+    await supabase.from('admin_settings').upsert({
+      key: `pending_podcast_${userId}`,
+      value: JSON.stringify({ step: 'title', youtube_id: youtubeId, youtube_url: text.trim() }),
+    });
+
+    await sendAdminMessage(chatId, `✅ Ссылка принята!
+
+Шаг 2/3: Отправьте заголовок подкаста`);
+    return true;
+  }
+
+  if (state.step === 'title') {
+    await supabase.from('admin_settings').upsert({
+      key: `pending_podcast_${userId}`,
+      value: JSON.stringify({ ...state, step: 'description', title: text.trim() }),
+    });
+
+    await sendAdminMessage(chatId, `✅ Заголовок сохранён!
+
+Шаг 3/3: Отправьте описание подкаста`);
+    return true;
+  }
+
+  if (state.step === 'description') {
+    // Check limit again
+    const { count } = await supabase
+      .from('podcasts')
+      .select('*', { count: 'exact', head: true });
+
+    if ((count || 0) >= MAX_PODCASTS) {
+      await supabase.from('admin_settings').delete().eq('key', `pending_podcast_${userId}`);
+      await sendAdminMessage(chatId, '❌ Ошибка, загружено уже 10 роликов');
+      return true;
+    }
+
+    // Save podcast
+    const { error } = await supabase.from('podcasts').insert({
+      youtube_url: state.youtube_url,
+      youtube_id: state.youtube_id,
+      title: state.title,
+      description: text.trim(),
+      thumbnail_url: `https://img.youtube.com/vi/${state.youtube_id}/maxresdefault.jpg`,
+    });
+
+    // Clear state
+    await supabase.from('admin_settings').delete().eq('key', `pending_podcast_${userId}`);
+
+    if (error) {
+      console.error('Error saving podcast:', error);
+      await sendAdminMessage(chatId, '❌ Ошибка при сохранении');
+    } else {
+      await sendAdminMessage(chatId, `✅ Подкаст "${state.title}" успешно добавлен!`);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+// Handle podcast delete list
+async function handlePodcastDeleteList(callbackQuery: any) {
+  const { id, message } = callbackQuery;
+
+  const { data: podcasts, error } = await supabase
+    .from('podcasts')
+    .select('id, title')
+    .order('created_at', { ascending: false });
+
+  if (error || !podcasts || podcasts.length === 0) {
+    await answerCallbackQuery(id, 'Нет подкастов для удаления');
+    return;
+  }
+
+  const buttons = podcasts.map(p => [{ 
+    text: `🗑 ${p.title.substring(0, 30)}${p.title.length > 30 ? '...' : ''}`, 
+    callback_data: `podcast_del:${p.id.substring(0, 8)}` 
+  }]);
+  buttons.push([{ text: '◀️ Назад', callback_data: 'podcast_back' }]);
+
+  await answerCallbackQuery(id);
+  await editAdminMessage(message.chat.id, message.message_id, '🗑 <b>Выберите подкаст для удаления:</b>', {
+    reply_markup: { inline_keyboard: buttons },
+  });
+}
+
+// Handle podcast delete
+async function handlePodcastDelete(callbackQuery: any, podcastIdPrefix: string) {
+  const { id, message } = callbackQuery;
+
+  // Find podcast
+  const { data: podcasts } = await supabase
+    .from('podcasts')
+    .select('id, title')
+    .order('created_at', { ascending: false });
+
+  const podcast = podcasts?.find(p => p.id.startsWith(podcastIdPrefix));
+  if (!podcast) {
+    await answerCallbackQuery(id, '❌ Подкаст не найден');
+    return;
+  }
+
+  const { error } = await supabase.from('podcasts').delete().eq('id', podcast.id);
+
+  if (error) {
+    await answerCallbackQuery(id, '❌ Ошибка при удалении');
+    return;
+  }
+
+  await answerCallbackQuery(id, '✅ Подкаст удалён');
+  await sendAdminMessage(message.chat.id, `🗑 Подкаст "${podcast.title}" удалён`);
+}
+
+// ==================== PLAYLISTS MANAGEMENT ====================
+
+const MAX_PLAYLISTS_PER_SERVICE = 10;
+
+// Handle /pl command
+async function handlePlaylists(chatId: number, userId: number) {
+  if (!isAdmin(userId)) return;
+
+  const message = `🎵 <b>Управление плейлистами</b>
+
+Выберите сервис:`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🟢 Spotify', callback_data: 'pl_service:spotify' }],
+      [{ text: '🟠 SoundCloud', callback_data: 'pl_service:soundcloud' }],
+      [{ text: '🟡 Яндекс Музыка', callback_data: 'pl_service:yandex' }],
+    ],
+  };
+
+  await sendAdminMessage(chatId, message, { reply_markup: keyboard });
+}
+
+// Handle playlist service selection
+async function handlePlaylistService(callbackQuery: any, service: string) {
+  const { id, message } = callbackQuery;
+
+  const serviceNames: Record<string, string> = {
+    spotify: 'Spotify',
+    soundcloud: 'SoundCloud',
+    yandex: 'Яндекс Музыка',
+  };
+
+  const { data: playlists } = await supabase
+    .from('playlists')
+    .select('id, title, category')
+    .eq('service', service)
+    .order('created_at', { ascending: false });
+
+  const count = playlists?.length || 0;
+
+  let listText = '';
+  if (playlists && playlists.length > 0) {
+    const categoryLabels: Record<string, string> = {
+      motivation: 'Мотивация',
+      workout: 'Тренировка',
+      'self-development': 'Саморазвитие',
+    };
+    listText = '\n\n<b>Текущие плейлисты:</b>\n' + playlists.map(p => 
+      `• ${p.title} (${categoryLabels[p.category] || p.category})`
+    ).join('\n');
+  }
+
+  const serviceMessage = `🎵 <b>${serviceNames[service]}</b>
+
+📊 Загружено: ${count}/${MAX_PLAYLISTS_PER_SERVICE} плейлистов${listText}`;
+
+  const buttons: any[][] = [];
+  
+  if (count < MAX_PLAYLISTS_PER_SERVICE) {
+    buttons.push([{ text: '➕ Добавить плейлист', callback_data: `pl_add:${service}` }]);
+  }
+  
+  if (playlists && playlists.length > 0) {
+    buttons.push([{ text: '🗑 Удалить плейлист', callback_data: `pl_del_list:${service}` }]);
+  }
+  
+  buttons.push([{ text: '◀️ Назад', callback_data: 'pl_back' }]);
+
+  await answerCallbackQuery(id);
+  await editAdminMessage(message.chat.id, message.message_id, serviceMessage, {
+    reply_markup: { inline_keyboard: buttons },
+  });
+}
+
+// Handle playlist add start
+async function handlePlaylistAddStart(callbackQuery: any, service: string) {
+  const { id, message, from } = callbackQuery;
+
+  const { count } = await supabase
+    .from('playlists')
+    .select('*', { count: 'exact', head: true })
+    .eq('service', service);
+
+  if ((count || 0) >= MAX_PLAYLISTS_PER_SERVICE) {
+    await answerCallbackQuery(id, '❌ Максимум 10 плейлистов на сервис');
+    return;
+  }
+
+  // Store state
+  await supabase.from('admin_settings').upsert({
+    key: `pending_playlist_${from.id}`,
+    value: JSON.stringify({ step: 'category', service }),
+  });
+
+  const keyboard = {
+    inline_keyboard: [
+      [{ text: '🔥 Мотивация', callback_data: 'pl_cat:motivation' }],
+      [{ text: '💪 Тренировка', callback_data: 'pl_cat:workout' }],
+      [{ text: '🧠 Саморазвитие', callback_data: 'pl_cat:self-development' }],
+    ],
+  };
+
+  await answerCallbackQuery(id);
+  await sendAdminMessage(message.chat.id, `🎵 <b>Добавление плейлиста</b>
+
+Шаг 1/3: Выберите категорию`, { reply_markup: keyboard });
+}
+
+// Handle playlist category selection
+async function handlePlaylistCategory(callbackQuery: any, category: string) {
+  const { id, message, from } = callbackQuery;
+
+  const { data: pending } = await supabase
+    .from('admin_settings')
+    .select('value')
+    .eq('key', `pending_playlist_${from.id}`)
+    .maybeSingle();
+
+  if (!pending) {
+    await answerCallbackQuery(id, '❌ Сессия истекла');
+    return;
+  }
+
+  let state;
+  try {
+    state = JSON.parse(pending.value || '{}');
+  } catch {
+    await answerCallbackQuery(id, '❌ Ошибка');
+    return;
+  }
+
+  // Update state
+  await supabase.from('admin_settings').upsert({
+    key: `pending_playlist_${from.id}`,
+    value: JSON.stringify({ ...state, step: 'title', category }),
+  });
+
+  await answerCallbackQuery(id);
+  await sendAdminMessage(message.chat.id, `✅ Категория выбрана!
+
+Шаг 2/3: Отправьте название плейлиста`);
+}
+
+// Handle playlist title/url input
+async function handlePlaylistInput(chatId: number, userId: number, text: string): Promise<boolean> {
+  const { data: pending } = await supabase
+    .from('admin_settings')
+    .select('value')
+    .eq('key', `pending_playlist_${userId}`)
+    .maybeSingle();
+
+  if (!pending) return false;
+
+  let state;
+  try {
+    state = JSON.parse(pending.value || '{}');
+  } catch {
+    return false;
+  }
+
+  if (state.step === 'title') {
+    await supabase.from('admin_settings').upsert({
+      key: `pending_playlist_${userId}`,
+      value: JSON.stringify({ ...state, step: 'url', title: text.trim() }),
+    });
+
+    await sendAdminMessage(chatId, `✅ Название сохранено!
+
+Шаг 3/3: Отправьте ссылку на плейлист`);
+    return true;
+  }
+
+  if (state.step === 'url') {
+    // Save playlist
+    const { error } = await supabase.from('playlists').insert({
+      service: state.service,
+      category: state.category,
+      title: state.title,
+      url: text.trim(),
+      cover_urls: [],
+    });
+
+    // Clear state
+    await supabase.from('admin_settings').delete().eq('key', `pending_playlist_${userId}`);
+
+    if (error) {
+      console.error('Error saving playlist:', error);
+      await sendAdminMessage(chatId, '❌ Ошибка при сохранении');
+    } else {
+      await sendAdminMessage(chatId, `✅ Плейлист "${state.title}" успешно добавлен!`);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+// Handle playlist delete list
+async function handlePlaylistDeleteList(callbackQuery: any, service: string) {
+  const { id, message } = callbackQuery;
+
+  const { data: playlists } = await supabase
+    .from('playlists')
+    .select('id, title')
+    .eq('service', service)
+    .order('created_at', { ascending: false });
+
+  if (!playlists || playlists.length === 0) {
+    await answerCallbackQuery(id, 'Нет плейлистов для удаления');
+    return;
+  }
+
+  const buttons = playlists.map(p => [{ 
+    text: `🗑 ${p.title.substring(0, 30)}${p.title.length > 30 ? '...' : ''}`, 
+    callback_data: `pl_del:${p.id.substring(0, 8)}` 
+  }]);
+  buttons.push([{ text: '◀️ Назад', callback_data: `pl_service:${service}` }]);
+
+  await answerCallbackQuery(id);
+  await editAdminMessage(message.chat.id, message.message_id, '🗑 <b>Выберите плейлист для удаления:</b>', {
+    reply_markup: { inline_keyboard: buttons },
+  });
+}
+
+// Handle playlist delete
+async function handlePlaylistDelete(callbackQuery: any, playlistIdPrefix: string) {
+  const { id, message } = callbackQuery;
+
+  const { data: playlists } = await supabase
+    .from('playlists')
+    .select('id, title, service')
+    .order('created_at', { ascending: false });
+
+  const playlist = playlists?.find(p => p.id.startsWith(playlistIdPrefix));
+  if (!playlist) {
+    await answerCallbackQuery(id, '❌ Плейлист не найден');
+    return;
+  }
+
+  const { error } = await supabase.from('playlists').delete().eq('id', playlist.id);
+
+  if (error) {
+    await answerCallbackQuery(id, '❌ Ошибка при удалении');
+    return;
+  }
+
+  await answerCallbackQuery(id, '✅ Плейлист удалён');
+  await sendAdminMessage(message.chat.id, `🗑 Плейлист "${playlist.title}" удалён`);
+}
+
+
 async function handleBroadcast(chatId: number, userId: number, text?: string) {
   if (!isAdmin(userId)) return;
 
@@ -1539,6 +1996,28 @@ async function handleCallbackQuery(callbackQuery: any) {
     await handleViewArticle(callbackQuery, param);
   } else if (action === 'delete_article') {
     await handleDeleteArticle(callbackQuery, param);
+  } else if (action === 'podcast_add') {
+    await handlePodcastAddStart(callbackQuery);
+  } else if (action === 'podcast_delete_list') {
+    await handlePodcastDeleteList(callbackQuery);
+  } else if (action === 'podcast_del') {
+    await handlePodcastDelete(callbackQuery, param);
+  } else if (action === 'podcast_back') {
+    await answerCallbackQuery(callbackQuery.id);
+    await handlePodcasts(message.chat.id, from.id);
+  } else if (action === 'pl_service') {
+    await handlePlaylistService(callbackQuery, param);
+  } else if (action === 'pl_add') {
+    await handlePlaylistAddStart(callbackQuery, param);
+  } else if (action === 'pl_cat') {
+    await handlePlaylistCategory(callbackQuery, param);
+  } else if (action === 'pl_del_list') {
+    await handlePlaylistDeleteList(callbackQuery, param);
+  } else if (action === 'pl_del') {
+    await handlePlaylistDelete(callbackQuery, param);
+  } else if (action === 'pl_back') {
+    await answerCallbackQuery(callbackQuery.id);
+    await handlePlaylists(message.chat.id, from.id);
   }
 }
 
@@ -1637,9 +2116,25 @@ Deno.serve(async (req) => {
         await handleQuestions(chat.id, from.id);
       } else if (text?.startsWith('/broadcast')) {
         await handleBroadcast(chat.id, from.id, text);
+      } else if (text === '/podc') {
+        await handlePodcasts(chat.id, from.id);
+      } else if (text === '/pl') {
+        await handlePlaylists(chat.id, from.id);
       } else if (text === '/help') {
         await handleStart(chat.id, from.id);
       } else {
+        // Check podcast input
+        const podcastHandled = await handlePodcastUrlInput(chat.id, from.id, text);
+        if (podcastHandled) {
+          return new Response('OK', { headers: corsHeaders });
+        }
+
+        // Check playlist input
+        const playlistHandled = await handlePlaylistInput(chat.id, from.id, text);
+        if (playlistHandled) {
+          return new Response('OK', { headers: corsHeaders });
+        }
+
         // Check if this is a pending support answer
         const supportHandled = await handlePendingSupportAnswer(chat.id, from.id, text);
         if (supportHandled) {

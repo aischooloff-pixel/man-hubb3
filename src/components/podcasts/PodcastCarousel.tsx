@@ -1,50 +1,85 @@
 import { useState, useRef } from 'react';
 import { Headphones } from 'lucide-react';
-import { Podcast } from '@/types';
 import { PodcastCard } from './PodcastCard';
 import { PodcastPlayerModal } from './PodcastPlayerModal';
 import { cn } from '@/lib/utils';
+import { usePodcasts, Podcast } from '@/hooks/use-podcasts';
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface PodcastCarouselProps {
   title: string;
-  podcasts: Podcast[];
   className?: string;
 }
 
-export function PodcastCarousel({ title, podcasts, className }: PodcastCarouselProps) {
+export function PodcastCarousel({ title, className }: PodcastCarouselProps) {
   const [selectedPodcast, setSelectedPodcast] = useState<Podcast | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const { podcasts, loading } = usePodcasts();
+
+  const handlePlay = (podcast: Podcast) => {
+    setSelectedPodcast(podcast);
+  };
 
   return (
     <>
       <section className={cn('px-4', className)}>
-        {/* Container with rounded corners like reference */}
         <div className="rounded-2xl bg-card p-4">
           <div className="mb-4 flex items-center gap-2">
             <Headphones className="h-5 w-5 text-muted-foreground" />
             <h2 className="font-heading text-lg font-semibold">{title}</h2>
           </div>
 
-          {/* Horizontal scrollable area */}
           <div
             ref={scrollRef}
             className="scrollbar-hide -mx-2 flex gap-3 overflow-x-auto px-2 pb-2"
           >
-            {podcasts.map((podcast, index) => (
-              <PodcastCard
-                key={podcast.id}
-                podcast={podcast}
-                onPlay={setSelectedPodcast}
-                className="animate-slide-up"
-                style={{ animationDelay: `${index * 100}ms` }}
-              />
-            ))}
+            {loading ? (
+              <>
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-40 w-48 flex-shrink-0 rounded-xl" />
+                ))}
+              </>
+            ) : podcasts.length === 0 ? (
+              <div className="py-8 text-center text-muted-foreground w-full">
+                <p>Подкасты пока не добавлены</p>
+              </div>
+            ) : (
+              podcasts.map((podcast, index) => (
+                <PodcastCard
+                  key={podcast.id}
+                  podcast={{
+                    id: podcast.id,
+                    youtube_url: podcast.youtube_url,
+                    youtube_id: podcast.youtube_id,
+                    title: podcast.title,
+                    description: podcast.description || '',
+                    thumbnail_url: podcast.thumbnail_url || `https://img.youtube.com/vi/${podcast.youtube_id}/maxresdefault.jpg`,
+                    duration: '',
+                    channel_name: 'BoysHub',
+                    created_at: podcast.created_at || '',
+                  }}
+                  onPlay={() => handlePlay(podcast)}
+                  className="animate-slide-up"
+                  style={{ animationDelay: `${index * 100}ms` }}
+                />
+              ))
+            )}
           </div>
         </div>
       </section>
 
       <PodcastPlayerModal
-        podcast={selectedPodcast}
+        podcast={selectedPodcast ? {
+          id: selectedPodcast.id,
+          youtube_url: selectedPodcast.youtube_url,
+          youtube_id: selectedPodcast.youtube_id,
+          title: selectedPodcast.title,
+          description: selectedPodcast.description || '',
+          thumbnail_url: selectedPodcast.thumbnail_url || `https://img.youtube.com/vi/${selectedPodcast.youtube_id}/maxresdefault.jpg`,
+          duration: '',
+          channel_name: 'BoysHub',
+          created_at: selectedPodcast.created_at || '',
+        } : null}
         isOpen={!!selectedPodcast}
         onClose={() => setSelectedPodcast(null)}
       />

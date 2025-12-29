@@ -10,8 +10,9 @@ import { TelegramCTA } from '@/components/cta/TelegramCTA';
 import { ArticleCard } from '@/components/articles/ArticleCard';
 import { PremiumModal } from '@/components/profile/PremiumModal';
 import { WelcomeModal, useWelcomeModal } from '@/components/welcome/WelcomeModal';
+import { AIAssistantSection } from '@/components/ai/AIAssistantSection';
 import { Skeleton } from '@/components/ui/skeleton';
-import { mockPodcasts, mockCategories } from '@/data/mockData';
+import { mockCategories } from '@/data/mockData';
 import { Category } from '@/types';
 import { useProfile } from '@/hooks/use-profile';
 import { useArticles, Article } from '@/hooks/use-articles';
@@ -176,19 +177,26 @@ export default function Index() {
         {/* Podcasts */}
         <PodcastCarousel
           title="Подкасты"
-          podcasts={mockPodcasts}
           className="mb-8"
         />
 
         {/* Playlists */}
         <PlaylistsSection className="mb-8" />
 
+        {/* AI Assistant - show after playlists if premium, otherwise after premium banner */}
+        {isPremium && (
+          <AIAssistantSection className="mb-8" />
+        )}
+
         {/* Premium Banner */}
         {!isPremium && (
-          <PremiumBanner 
-            className="mb-8" 
-            onClick={() => setIsPremiumOpen(true)}
-          />
+          <>
+            <PremiumBanner 
+              className="mb-8" 
+              onClick={() => setIsPremiumOpen(true)}
+            />
+            <AIAssistantSection className="mb-8" />
+          </>
         )}
 
         {/* Latest Articles */}
