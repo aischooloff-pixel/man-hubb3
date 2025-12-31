@@ -19,6 +19,8 @@ interface Product {
   media_type: string | null;
   link: string | null;
   is_active: boolean;
+  status: string;
+  rejection_reason: string | null;
   created_at: string;
 }
 
@@ -57,14 +59,18 @@ export function ProductsModal({ isOpen, onClose, userProfileId }: ProductsModalP
   const loadProducts = async () => {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('user_products')
-        .select('*')
-        .eq('user_profile_id', userProfileId)
-        .order('created_at', { ascending: false });
+      const initData = webApp?.initData;
+      if (!initData) {
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase.functions.invoke('tg-manage-product', {
+        body: { initData, action: 'list' },
+      });
       
-      if (!error && data) {
-        setProducts(data as Product[]);
+      if (!error && data?.products) {
+        setProducts(data.products as Product[]);
       }
     } catch (err) {
       console.error('Error loading products:', err);
@@ -441,8 +447,33 @@ export function ProductsModal({ isOpen, onClose, userProfileId }: ProductsModalP
                   {products.map((product) => (
                     <div
                       key={product.id}
-                      className="rounded-xl border border-border p-4"
+                      className={cn(
+                        "rounded-xl border p-4",
+                        product.status === 'pending' ? "border-yellow-500/50 bg-yellow-500/5" :
+                        product.status === 'rejected' ? "border-destructive/50 bg-destructive/5" :
+                        "border-border"
+                      )}
                     >
+                      {/* Status badge */}
+                      {product.status === 'pending' && (
+                        <div className="mb-2 flex items-center gap-1.5 text-xs text-yellow-600">
+                          <span className="h-1.5 w-1.5 rounded-full bg-yellow-500 animate-pulse" />
+                          На модерации
+                        </div>
+                      )}
+                      {product.status === 'rejected' && (
+                        <div className="mb-2">
+                          <div className="flex items-center gap-1.5 text-xs text-destructive">
+                            <X className="h-3 w-3" />
+                            Отклонён
+                          </div>
+                          {product.rejection_reason && (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Причина: {product.rejection_reason}
+                            </p>
+                          )}
+                        </div>
+                      )}
                       <div className="flex items-start gap-3">
                         {product.media_url && (
                           <div 

@@ -8,8 +8,46 @@ const corsHeaders = {
 const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const TELEGRAM_ADMIN_CHAT_ID = Deno.env.get('TELEGRAM_ADMIN_CHAT_ID')!;
+const ADMIN_BOT_TOKEN = Deno.env.get('ADMIN_BOT_TOKEN')!;
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+// Send moderation notification to admin
+async function sendProductModerationNotification(product: any, profile: any) {
+  const message = `📦 <b>Новый продукт на модерации</b>
+
+📛 <b>Название:</b> ${product.title}
+💰 <b>Цена:</b> ${product.price} ${product.currency || 'RUB'}
+
+📝 <b>Описание:</b>
+${product.description?.substring(0, 300) || 'Нет описания'}${product.description?.length > 300 ? '...' : ''}
+
+${product.media_url ? `🎬 <b>Медиа:</b> ${product.media_url}` : ''}
+${product.link ? `🔗 <b>Ссылка:</b> ${product.link}` : ''}
+
+👤 <b>Автор:</b> ${profile.username ? '@' + profile.username : profile.first_name || 'ID:' + profile.telegram_id}`;
+
+  const keyboard = {
+    inline_keyboard: [
+      [
+        { text: '✅ Одобрить', callback_data: `product_approve:${product.id}` },
+        { text: '❌ Отклонить', callback_data: `product_reject:${product.id}` },
+      ],
+    ],
+  };
+
+  await fetch(`https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: TELEGRAM_ADMIN_CHAT_ID,
+      text: message,
+      parse_mode: 'HTML',
+      reply_markup: keyboard,
+    }),
+  });
+}
 
 function parseInitData(initData: string) {
   return new URLSearchParams(initData);
@@ -99,7 +137,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Check if user has premium subscription
+    // List products (no premium check needed for own products)
+    if (action === 'list') {
+      const { data: products, error } = await supabase
+        .from('user_products')
+        .select('*')
+        .eq('user_profile_id', profile.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      return new Response(JSON.stringify({ products: products || [] }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Check if user has premium subscription for other actions
     if (profile.subscription_tier !== 'premium') {
       return new Response(JSON.stringify({ error: 'Premium subscription required' }), {
         status: 403,
@@ -118,6 +171,13 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Get profile info for notification
+      const { data: fullProfile } = await supabase
+        .from('profiles')
+        .select('telegram_id, username, first_name')
+        .eq('id', profile.id)
+        .maybeSingle();
+
       const { data: created, error } = await supabase
         .from('user_products')
         .insert({
@@ -129,11 +189,15 @@ Deno.serve(async (req) => {
           media_url: product.media_url,
           media_type: mediaType,
           link: product.link,
+          status: 'pending',
         })
         .select('*')
         .single();
 
       if (error) throw error;
+
+      // Send moderation notification
+      await sendProductModerationNotification(created, fullProfile);
 
       return new Response(JSON.stringify({ product: created }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -164,6 +228,13 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Get profile info for notification
+      const { data: fullProfile } = await supabase
+        .from('profiles')
+        .select('telegram_id, username, first_name')
+        .eq('id', profile.id)
+        .maybeSingle();
+
       const { data: updated, error } = await supabase
         .from('user_products')
         .update({
@@ -174,6 +245,8 @@ Deno.serve(async (req) => {
           media_url: product.media_url,
           media_type: mediaType,
           link: product.link,
+          status: 'pending',
+          rejection_reason: null,
           updated_at: new Date().toISOString(),
         })
         .eq('id', productId)
@@ -181,6 +254,9 @@ Deno.serve(async (req) => {
         .single();
 
       if (error) throw error;
+
+      // Send moderation notification
+      await sendProductModerationNotification(updated, fullProfile);
 
       return new Response(JSON.stringify({ product: updated }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

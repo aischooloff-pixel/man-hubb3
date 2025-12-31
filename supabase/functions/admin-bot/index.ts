@@ -135,6 +135,7 @@ async function handleStart(chatId: number, userId: number) {
 🎟 /pr — Управление промокодами
 📝 /pending — Статьи на модерации
 📰 /st — Список статей
+📦 /product — Продукты на модерации
 🚨 /zb — Жалобы на статьи
 👤 /user_reports — Жалобы на пользователей
 ⭐ /otz — Отзывы пользователей
@@ -2978,6 +2979,247 @@ async function handleEditReject(callbackQuery: any, shortId: string) {
   await sendAdminMessage(message.chat.id, `❌ Редактирование статьи "${article.title}" отклонено`);
 }
 
+// ==================== PRODUCT MODERATION ====================
+
+const PRODUCTS_PER_PAGE = 10;
+const pendingProductRejections: Map<number, string> = new Map();
+
+// Handle /product command
+async function handleProducts(chatId: number, userId: number, page: number = 0, messageId?: number) {
+  if (!isAdmin(userId)) return;
+
+  const from = page * PRODUCTS_PER_PAGE;
+
+  // Get pending count
+  const { count: pendingCount } = await supabase
+    .from('user_products')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'pending');
+
+  // Get approved count
+  const { count: approvedCount } = await supabase
+    .from('user_products')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'approved');
+
+  // Get rejected count
+  const { count: rejectedCount } = await supabase
+    .from('user_products')
+    .select('*', { count: 'exact', head: true })
+    .eq('status', 'rejected');
+
+  // Get all products ordered by created_at
+  const { count: totalCount } = await supabase
+    .from('user_products')
+    .select('*', { count: 'exact', head: true });
+
+  const { data: products, error } = await supabase
+    .from('user_products')
+    .select(`
+      id,
+      title,
+      price,
+      currency,
+      status,
+      created_at,
+      user:user_profile_id(telegram_id, username, first_name)
+    `)
+    .order('created_at', { ascending: false })
+    .range(from, from + PRODUCTS_PER_PAGE - 1);
+
+  if (error) {
+    console.error('Error fetching products:', error);
+    await sendAdminMessage(chatId, '❌ Ошибка загрузки продуктов');
+    return;
+  }
+
+  const totalPages = Math.ceil((totalCount || 0) / PRODUCTS_PER_PAGE);
+
+  let message = `📦 <b>Продукты</b>
+
+📊 <b>Статистика:</b>
+├ ⏳ На модерации: ${pendingCount || 0}
+├ ✅ Одобрено: ${approvedCount || 0}
+└ ❌ Отклонено: ${rejectedCount || 0}
+
+📄 Страница ${page + 1}/${totalPages || 1}\n\n`;
+
+  if (!products || products.length === 0) {
+    message += '<i>Нет продуктов</i>';
+  } else {
+    for (const product of products) {
+      const user = (product as any).user;
+      const statusIcon = product.status === 'pending' ? '⏳' : product.status === 'approved' ? '✅' : '❌';
+      const userDisplay = user?.username ? '@' + user.username : user?.first_name || `ID:${user?.telegram_id}`;
+      
+      message += `${statusIcon} <b>${product.title}</b>\n`;
+      message += `   💰 ${product.price} ${product.currency}\n`;
+      message += `   👤 ${userDisplay}\n\n`;
+    }
+  }
+
+  // Build keyboard
+  const buttons: any[][] = [];
+  if (products && products.length > 0) {
+    for (const product of products) {
+      if (product.status === 'pending') {
+        buttons.push([
+          { text: `✅ ${(product.title || '').substring(0, 15)}`, callback_data: `product_approve:${product.id}` },
+          { text: `❌`, callback_data: `product_reject:${product.id}` },
+        ]);
+      }
+    }
+  }
+
+  // Pagination
+  const prevPage = page > 0 ? page - 1 : page;
+  const nextPage = page < totalPages - 1 ? page + 1 : page;
+  if (totalPages > 1) {
+    buttons.push([
+      { text: '⬅️ Назад', callback_data: `products:${prevPage}` },
+      { text: 'Вперёд ➡️', callback_data: `products:${nextPage}` },
+    ]);
+  }
+
+  const keyboard = { inline_keyboard: buttons };
+
+  if (messageId) {
+    await editAdminMessage(chatId, messageId, message, { reply_markup: keyboard });
+  } else {
+    await sendAdminMessage(chatId, message, { reply_markup: keyboard });
+  }
+}
+
+// Handle product approve callback
+async function handleProductApprove(callbackQuery: any, productId: string) {
+  const { id, message, from } = callbackQuery;
+
+  const { data: product, error: fetchError } = await supabase
+    .from('user_products')
+    .select('*, user:user_profile_id(telegram_id, first_name, username)')
+    .eq('id', productId)
+    .maybeSingle();
+
+  if (fetchError || !product) {
+    await answerCallbackQuery(id, '❌ Продукт не найден');
+    return;
+  }
+
+  const { error } = await supabase
+    .from('user_products')
+    .update({
+      status: 'approved',
+      moderated_at: new Date().toISOString(),
+      moderated_by_telegram_id: from.id,
+      rejection_reason: null,
+    })
+    .eq('id', productId);
+
+  if (error) {
+    console.error('Error approving product:', error);
+    await answerCallbackQuery(id, '❌ Ошибка одобрения');
+    return;
+  }
+
+  const user = product.user as any;
+  
+  // Notify user
+  if (user?.telegram_id) {
+    await sendUserMessage(
+      user.telegram_id,
+      `✅ <b>Ваш продукт одобрен!</b>
+
+📦 "${product.title}"
+
+Теперь он виден в вашем публичном профиле.`
+    );
+  }
+
+  await answerCallbackQuery(id, '✅ Продукт одобрен');
+  await editMessageReplyMarkup(message.chat.id, message.message_id);
+  await sendAdminMessage(message.chat.id, `✅ Продукт "${product.title}" одобрен`);
+}
+
+// Handle product reject callback (start)
+async function handleProductRejectStart(callbackQuery: any, productId: string) {
+  const { id, message, from } = callbackQuery;
+
+  const { data: product } = await supabase
+    .from('user_products')
+    .select('id, title')
+    .eq('id', productId)
+    .maybeSingle();
+
+  if (!product) {
+    await answerCallbackQuery(id, '❌ Продукт не найден');
+    return;
+  }
+
+  // Store pending rejection
+  pendingProductRejections.set(from.id, productId);
+
+  await answerCallbackQuery(id);
+  await editMessageReplyMarkup(message.chat.id, message.message_id);
+  await sendAdminMessage(
+    message.chat.id,
+    `❌ Отклонение продукта "<b>${product.title}</b>"\n\nОтправьте причину отклонения:`
+  );
+}
+
+// Handle product rejection reason
+async function handleProductRejectionReason(chatId: number, userId: number, text: string): Promise<boolean> {
+  const productId = pendingProductRejections.get(userId);
+  if (!productId) return false;
+
+  pendingProductRejections.delete(userId);
+
+  const { data: product, error: fetchError } = await supabase
+    .from('user_products')
+    .select('*, user:user_profile_id(telegram_id, first_name, username)')
+    .eq('id', productId)
+    .maybeSingle();
+
+  if (fetchError || !product) {
+    await sendAdminMessage(chatId, '❌ Продукт не найден');
+    return true;
+  }
+
+  const { error } = await supabase
+    .from('user_products')
+    .update({
+      status: 'rejected',
+      rejection_reason: text,
+      moderated_at: new Date().toISOString(),
+      moderated_by_telegram_id: userId,
+    })
+    .eq('id', productId);
+
+  if (error) {
+    console.error('Error rejecting product:', error);
+    await sendAdminMessage(chatId, '❌ Ошибка отклонения продукта');
+    return true;
+  }
+
+  const user = product.user as any;
+  
+  // Notify user
+  if (user?.telegram_id) {
+    await sendUserMessage(
+      user.telegram_id,
+      `❌ <b>Ваш продукт отклонён</b>
+
+📦 "${product.title}"
+
+<b>Причина:</b> ${text}
+
+Вы можете исправить продукт и отправить повторно.`
+    );
+  }
+
+  await sendAdminMessage(chatId, `❌ Продукт "${product.title}" отклонён\n\n<b>Причина:</b> ${text}`);
+  return true;
+}
+
 // Handle callback queries
 async function handleCallbackQuery(callbackQuery: any) {
   const { data, from, message } = callbackQuery;
@@ -3091,6 +3333,13 @@ async function handleCallbackQuery(callbackQuery: any) {
   } else if (action === 'user_reports') {
     await answerCallbackQuery(callbackQuery.id);
     await handleUserReports(message.chat.id, from.id, parseInt(param || '0'), message.message_id);
+  } else if (action === 'product_approve') {
+    await handleProductApprove(callbackQuery, param);
+  } else if (action === 'product_reject') {
+    await handleProductRejectStart(callbackQuery, param);
+  } else if (action === 'products') {
+    await answerCallbackQuery(callbackQuery.id);
+    await handleProducts(message.chat.id, from.id, parseInt(param || '0'), message.message_id);
   }
 }
 
@@ -3726,10 +3975,18 @@ Deno.serve(async (req) => {
         await handleTogglePromoCode(chat.id, from.id, args);
       } else if (text === '/user_reports') {
         await handleUserReports(chat.id, from.id);
+      } else if (text === '/product') {
+        await handleProducts(chat.id, from.id);
       } else if (text === '/help') {
         await handleStart(chat.id, from.id);
       } else {
-        // FIRST: Check if this is a rejection reason (has priority over other inputs)
+        // FIRST: Check if this is a product rejection reason
+        const productRejectionHandled = await handleProductRejectionReason(chat.id, from.id, text);
+        if (productRejectionHandled) {
+          return new Response('OK', { headers: corsHeaders });
+        }
+
+        // Check if this is a rejection reason (has priority over other inputs)
         const rejectionHandled = await handleRejectionReason(chat.id, from.id, text);
         if (rejectionHandled) {
           return new Response('OK', { headers: corsHeaders });

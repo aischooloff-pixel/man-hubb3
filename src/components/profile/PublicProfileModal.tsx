@@ -104,6 +104,7 @@ export function PublicProfileModal({ isOpen, onClose, authorId }: PublicProfileM
         .select('*')
         .eq('user_profile_id', authorId)
         .eq('is_active', true)
+        .eq('status', 'approved')
         .limit(1);
       
       if (!error && data) {

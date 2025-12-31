@@ -839,7 +839,11 @@ export type Database = {
           link: string | null
           media_type: string | null
           media_url: string | null
+          moderated_at: string | null
+          moderated_by_telegram_id: number | null
           price: number
+          rejection_reason: string | null
+          status: string
           title: string
           updated_at: string
           user_profile_id: string
@@ -853,7 +857,11 @@ export type Database = {
           link?: string | null
           media_type?: string | null
           media_url?: string | null
+          moderated_at?: string | null
+          moderated_by_telegram_id?: number | null
           price: number
+          rejection_reason?: string | null
+          status?: string
           title: string
           updated_at?: string
           user_profile_id: string
@@ -867,7 +875,11 @@ export type Database = {
           link?: string | null
           media_type?: string | null
           media_url?: string | null
+          moderated_at?: string | null
+          moderated_by_telegram_id?: number | null
           price?: number
+          rejection_reason?: string | null
+          status?: string
           title?: string
           updated_at?: string
           user_profile_id?: string
