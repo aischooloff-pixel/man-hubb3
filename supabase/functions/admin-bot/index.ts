@@ -4236,6 +4236,69 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // GET request - setup webhook or check status
+  if (req.method === 'GET') {
+    const url = new URL(req.url);
+    const action = url.searchParams.get('action');
+    
+    if (action === 'set_webhook') {
+      // Set webhook
+      const webhookUrl = `${SUPABASE_URL}/functions/v1/admin-bot`;
+      const telegramUrl = `https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/setWebhook`;
+      
+      const response = await fetch(telegramUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: webhookUrl }),
+      });
+      
+      const result = await response.json();
+      console.log('Set webhook result:', result);
+      
+      return new Response(JSON.stringify({ 
+        success: result.ok, 
+        webhook_url: webhookUrl,
+        telegram_response: result 
+      }), { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      });
+    }
+    
+    if (action === 'delete_webhook') {
+      const telegramUrl = `https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/deleteWebhook`;
+      const response = await fetch(telegramUrl, { method: 'POST' });
+      const result = await response.json();
+      console.log('Delete webhook result:', result);
+      
+      return new Response(JSON.stringify({ success: result.ok, telegram_response: result }), { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      });
+    }
+    
+    if (action === 'info') {
+      const telegramUrl = `https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/getWebhookInfo`;
+      const response = await fetch(telegramUrl);
+      const result = await response.json();
+      console.log('Webhook info:', result);
+      
+      return new Response(JSON.stringify(result), { 
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      });
+    }
+    
+    // Default: show available actions
+    return new Response(JSON.stringify({
+      message: 'Admin Bot API',
+      actions: [
+        'GET ?action=set_webhook - установить webhook',
+        'GET ?action=delete_webhook - удалить webhook',
+        'GET ?action=info - информация о webhook'
+      ]
+    }), { 
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+    });
+  }
+
   try {
     const update = await req.json();
     console.log('Admin bot received update:', JSON.stringify(update));
