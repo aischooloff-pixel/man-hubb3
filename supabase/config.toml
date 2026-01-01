@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.tg-user-reputation]
 verify_jwt = false
+
+[functions.send-welcome-notifications]
+verify_jwt = false

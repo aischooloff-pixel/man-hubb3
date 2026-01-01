@@ -858,6 +858,41 @@ export type Database = {
           },
         ]
       }
+      scheduled_notifications: {
+        Row: {
+          created_at: string
+          id: string
+          notification_type: string
+          scheduled_at: string
+          sent_at: string | null
+          user_profile_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          notification_type?: string
+          scheduled_at: string
+          sent_at?: string | null
+          user_profile_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          notification_type?: string
+          scheduled_at?: string
+          sent_at?: string | null
+          user_profile_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scheduled_notifications_user_profile_id_fkey"
+            columns: ["user_profile_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       subscription_pricing: {
         Row: {
           created_at: string | null

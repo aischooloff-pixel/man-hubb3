@@ -68,14 +68,34 @@ async function handleStart(chatId: number, user: any, startParam?: string) {
   
   if (!existingProfile) {
     // Create new profile
-    await supabase.from('profiles').insert({
+    const { data: newProfile } = await supabase.from('profiles').insert({
       telegram_id: user.id,
       username: user.username || null,
       first_name: user.first_name || 'User',
       last_name: user.last_name || null,
       is_premium: user.is_premium || false,
-    });
+    }).select('id').single();
     console.log('Created new profile for telegram user:', user.id);
+
+    // Schedule welcome notification for new user
+    if (newProfile?.id) {
+      // Get delay from settings (default 15 minutes)
+      const { data: delaySetting } = await supabase
+        .from('admin_settings')
+        .select('value')
+        .eq('key', 'welcome_message_delay_minutes')
+        .maybeSingle();
+      
+      const delayMinutes = delaySetting?.value ? parseInt(delaySetting.value) : 15;
+      const scheduledAt = new Date(Date.now() + delayMinutes * 60 * 1000);
+
+      await supabase.from('scheduled_notifications').insert({
+        user_profile_id: newProfile.id,
+        notification_type: 'welcome',
+        scheduled_at: scheduledAt.toISOString(),
+      });
+      console.log(`Scheduled welcome notification for ${user.id} at ${scheduledAt.toISOString()}`);
+    }
   }
   
   // Handle support start param

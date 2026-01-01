@@ -143,6 +143,7 @@ async function handleStart(chatId: number, userId: number) {
 📢 /broadcast — Рассылка всем пользователям
 🎙 /podc — Управление подкастами
 🎵 /pl — Управление плейлистами
+👋 /hi — Настройка приветственного сообщения
 ❓ /help — Справка
 
 <b>Управление подписками:</b>
@@ -4001,6 +4002,238 @@ async function handleSearchReviews(chatId: number, userId: number, query: string
   }
 }
 
+// Handle /hi command - welcome message settings
+async function handleHi(chatId: number, userId: number) {
+  if (!isAdmin(userId)) return;
+
+  // Get current settings
+  const { data: settings } = await supabase
+    .from('admin_settings')
+    .select('key, value')
+    .in('key', ['welcome_message_text', 'welcome_message_media_url', 'welcome_message_media_type', 'welcome_message_delay_minutes']);
+
+  const settingsMap: Record<string, string> = {};
+  settings?.forEach(s => {
+    if (s.value) settingsMap[s.key] = s.value;
+  });
+
+  const currentText = settingsMap['welcome_message_text'] || 'Не настроено';
+  const currentDelay = settingsMap['welcome_message_delay_minutes'] || '15';
+  const currentMedia = settingsMap['welcome_message_media_url'] || 'Не настроено';
+  const currentMediaType = settingsMap['welcome_message_media_type'] || 'Не настроено';
+
+  const message = `👋 <b>Настройка приветственного сообщения</b>
+
+Это сообщение отправляется новым пользователям через заданное время после первого запуска бота.
+
+<b>Текущие настройки:</b>
+⏱ <b>Задержка:</b> ${currentDelay} мин
+📝 <b>Текст:</b>
+${currentText.substring(0, 200)}${currentText.length > 200 ? '...' : ''}
+
+🎬 <b>Медиа:</b> ${currentMedia !== 'Не настроено' ? `✅ (${currentMediaType})` : '❌'}
+
+<b>Команды:</b>
+<code>/hi_text</code> — установить текст сообщения
+<code>/hi_delay [минуты]</code> — установить задержку
+<code>/hi_media [URL]</code> — добавить фото/видео
+<code>/hi_clear_media</code> — убрать медиа
+<code>/hi_preview</code> — предпросмотр
+
+<b>Форматирование текста:</b>
+• <code>&lt;b&gt;жирный&lt;/b&gt;</code> — <b>жирный</b>
+• <code>&lt;i&gt;курсив&lt;/i&gt;</code> — <i>курсив</i>
+• <code>&lt;u&gt;подчёркнутый&lt;/u&gt;</code> — <u>подчёркнутый</u>
+• <code>&lt;a href="URL"&gt;ссылка&lt;/a&gt;</code> — ссылка`;
+
+  await sendAdminMessage(chatId, message);
+}
+
+// Handle /hi_text command - set welcome message text
+async function handleHiText(chatId: number, userId: number) {
+  if (!isAdmin(userId)) return;
+
+  await sendAdminMessage(chatId, `📝 <b>Установка текста приветствия</b>
+
+Отправьте следующим сообщением текст приветственного сообщения.
+
+<b>Форматирование:</b>
+• <code>&lt;b&gt;жирный&lt;/b&gt;</code>
+• <code>&lt;i&gt;курсив&lt;/i&gt;</code>
+• <code>&lt;a href="https://t.me/Man_HubRu"&gt;наш канал&lt;/a&gt;</code>
+
+<i>Следующее ваше сообщение будет сохранено как текст приветствия.</i>`);
+
+  // Set pending mode
+  await supabase.from('admin_settings').upsert({
+    key: `hi_text_pending_${userId}`,
+    value: 'active',
+  }, { onConflict: 'key' });
+}
+
+// Handle /hi_delay command
+async function handleHiDelay(chatId: number, userId: number, args: string) {
+  if (!isAdmin(userId)) return;
+
+  if (!args) {
+    await sendAdminMessage(chatId, `⏱ <b>Задержка приветственного сообщения</b>
+
+Используйте:
+<code>/hi_delay [минуты]</code>
+
+Примеры:
+<code>/hi_delay 15</code> — 15 минут (по умолчанию)
+<code>/hi_delay 60</code> — 1 час
+<code>/hi_delay 1440</code> — 24 часа`);
+    return;
+  }
+
+  const minutes = parseInt(args);
+  if (isNaN(minutes) || minutes < 1) {
+    await sendAdminMessage(chatId, '❌ Укажите корректное количество минут (минимум 1)');
+    return;
+  }
+
+  await supabase.from('admin_settings').upsert({
+    key: 'welcome_message_delay_minutes',
+    value: minutes.toString(),
+  }, { onConflict: 'key' });
+
+  await sendAdminMessage(chatId, `✅ Задержка установлена: <b>${minutes} мин</b>`);
+}
+
+// Handle /hi_media command
+async function handleHiMedia(chatId: number, userId: number, args: string) {
+  if (!isAdmin(userId)) return;
+
+  if (!args) {
+    await sendAdminMessage(chatId, `🎬 <b>Медиа для приветствия</b>
+
+Используйте:
+<code>/hi_media [URL]</code>
+
+Поддерживаются прямые ссылки на изображения и видео.
+
+Примеры:
+<code>/hi_media https://example.com/image.jpg</code>
+<code>/hi_media https://example.com/video.mp4</code>`);
+    return;
+  }
+
+  // Determine media type
+  const url = args.trim();
+  let mediaType = 'photo';
+  if (url.includes('.mp4') || url.includes('.mov') || url.includes('video')) {
+    mediaType = 'video';
+  }
+
+  await supabase.from('admin_settings').upsert({
+    key: 'welcome_message_media_url',
+    value: url,
+  }, { onConflict: 'key' });
+
+  await supabase.from('admin_settings').upsert({
+    key: 'welcome_message_media_type',
+    value: mediaType,
+  }, { onConflict: 'key' });
+
+  await sendAdminMessage(chatId, `✅ Медиа добавлено: <b>${mediaType}</b>\n\n🔗 ${url}`);
+}
+
+// Handle /hi_clear_media command
+async function handleHiClearMedia(chatId: number, userId: number) {
+  if (!isAdmin(userId)) return;
+
+  await supabase.from('admin_settings').delete().eq('key', 'welcome_message_media_url');
+  await supabase.from('admin_settings').delete().eq('key', 'welcome_message_media_type');
+
+  await sendAdminMessage(chatId, '✅ Медиа удалено');
+}
+
+// Handle /hi_preview command
+async function handleHiPreview(chatId: number, userId: number) {
+  if (!isAdmin(userId)) return;
+
+  // Get current settings
+  const { data: settings } = await supabase
+    .from('admin_settings')
+    .select('key, value')
+    .in('key', ['welcome_message_text', 'welcome_message_media_url', 'welcome_message_media_type', 'welcome_message_delay_minutes']);
+
+  const settingsMap: Record<string, string> = {};
+  settings?.forEach(s => {
+    if (s.value) settingsMap[s.key] = s.value;
+  });
+
+  const messageText = settingsMap['welcome_message_text'];
+  const mediaUrl = settingsMap['welcome_message_media_url'];
+  const mediaType = settingsMap['welcome_message_media_type'];
+  const delay = settingsMap['welcome_message_delay_minutes'] || '15';
+
+  if (!messageText) {
+    await sendAdminMessage(chatId, '❌ Текст приветствия не настроен. Используйте /hi_text');
+    return;
+  }
+
+  await sendAdminMessage(chatId, `👁 <b>Предпросмотр</b> (отправляется через ${delay} мин):\n\n---`);
+
+  if (mediaUrl && mediaType) {
+    if (mediaType === 'photo') {
+      const url = `https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/sendPhoto`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          photo: mediaUrl,
+          caption: messageText,
+          parse_mode: 'HTML',
+        }),
+      });
+    } else if (mediaType === 'video') {
+      const url = `https://api.telegram.org/bot${ADMIN_BOT_TOKEN}/sendVideo`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: chatId,
+          video: mediaUrl,
+          caption: messageText,
+          parse_mode: 'HTML',
+        }),
+      });
+    }
+  } else {
+    await sendAdminMessage(chatId, messageText);
+  }
+}
+
+// Handle pending hi text input
+async function handlePendingHiText(chatId: number, userId: number, text: string): Promise<boolean> {
+  // Check if hi text mode is active
+  const { data: pending } = await supabase
+    .from('admin_settings')
+    .select('value')
+    .eq('key', `hi_text_pending_${userId}`)
+    .maybeSingle();
+
+  if (!pending || pending.value !== 'active') {
+    return false;
+  }
+
+  // Clear pending mode
+  await supabase.from('admin_settings').delete().eq('key', `hi_text_pending_${userId}`);
+
+  // Save the message text
+  await supabase.from('admin_settings').upsert({
+    key: 'welcome_message_text',
+    value: text,
+  }, { onConflict: 'key' });
+
+  await sendAdminMessage(chatId, `✅ Текст приветствия сохранён!\n\nИспользуйте /hi_preview для предпросмотра.`);
+  return true;
+}
+
 // Send new article notification to admin
 export async function sendModerationNotification(article: any) {
   const shortId = await getOrCreateShortId(article.id);
@@ -4166,10 +4399,34 @@ Deno.serve(async (req) => {
         await handleSearchProduct(chat.id, from.id, query);
       } else if (text === '/search_product') {
         await handleSearchProduct(chat.id, from.id, '');
+      } else if (text === '/hi') {
+        await handleHi(chat.id, from.id);
+      } else if (text === '/hi_text') {
+        await handleHiText(chat.id, from.id);
+      } else if (text?.startsWith('/hi_delay ')) {
+        const args = text.replace('/hi_delay ', '').trim();
+        await handleHiDelay(chat.id, from.id, args);
+      } else if (text === '/hi_delay') {
+        await handleHiDelay(chat.id, from.id, '');
+      } else if (text?.startsWith('/hi_media ')) {
+        const args = text.replace('/hi_media ', '').trim();
+        await handleHiMedia(chat.id, from.id, args);
+      } else if (text === '/hi_media') {
+        await handleHiMedia(chat.id, from.id, '');
+      } else if (text === '/hi_clear_media') {
+        await handleHiClearMedia(chat.id, from.id);
+      } else if (text === '/hi_preview') {
+        await handleHiPreview(chat.id, from.id);
       } else if (text === '/help') {
         await handleStart(chat.id, from.id);
       } else {
-        // FIRST: Check if this is a product rejection reason
+        // FIRST: Check hi text pending mode
+        const hiTextHandled = await handlePendingHiText(chat.id, from.id, text);
+        if (hiTextHandled) {
+          return new Response('OK', { headers: corsHeaders });
+        }
+
+        // Check if this is a product rejection reason
         const productRejectionHandled = await handleProductRejectionReason(chat.id, from.id, text);
         if (productRejectionHandled) {
           return new Response('OK', { headers: corsHeaders });

@@ -1,12 +1,21 @@
 import { Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useTelegram } from '@/hooks/use-telegram';
 
 interface TelegramCTAProps {
   className?: string;
 }
 
+const TELEGRAM_CHANNEL_URL = 'https://t.me/Man_HubRu';
+
 export function TelegramCTA({ className }: TelegramCTAProps) {
+  const { openTelegramLink } = useTelegram();
+
+  const handleSubscribe = () => {
+    openTelegramLink(TELEGRAM_CHANNEL_URL);
+  };
+
   return (
     <section
       className={cn(
@@ -25,7 +34,7 @@ export function TelegramCTA({ className }: TelegramCTAProps) {
           <p className="mb-4 text-sm text-muted-foreground">
             Новости, анонсы и эксклюзивный контент в нашем Telegram-канале
           </p>
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" onClick={handleSubscribe}>
             <Send className="h-4 w-4" />
             Подписаться
           </Button>
